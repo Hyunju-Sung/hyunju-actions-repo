@@ -1,0 +1,48 @@
+name: 'Build Docker Image'
+description: 'Build Docker Image'
+
+inputs:
+  ecr_root:
+    description: for ECR Repository Name (ecr_root/service)
+    required: true
+  service:
+    description: for ECR Repository Name (ecr_root/service)
+    required: true
+  tag:
+    description: The tag name
+    required: true
+  aws-gh-action-role:
+    description: "AWS github action role arn"
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+
+    #- uses: actions/checkout@v3
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        role-to-assume: ${{ inputs.aws-gh-action-role }}
+        aws-region: ap-northeast-2
+
+    - name: Login to Amazon ECR Private
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build and Save Docker Image
+      id: image-info
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ inputs.ecr_root }}/${{ inputs.service }}
+        IMAGE_TAG: ${{ inputs.tag }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG . --file docker/Dockerfile
+        docker save $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -o image.tar
+      shell: bash
+
+    - name: Upload Docker image artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: docker-image
+        path: image.tar

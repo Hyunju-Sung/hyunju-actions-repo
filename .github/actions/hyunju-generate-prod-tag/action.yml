@@ -1,0 +1,25 @@
+name: 'stage_tag_generator'
+description: 'stage_tag_generator'
+
+outputs:
+  tag:
+    description: 'Generated tag'
+
+runs:
+  using: 'composite'
+  steps:
+
+    - name: Checkout code
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - name: Tag v0.0.1
+      run: |
+        set -x
+        git tag "v0.0.1"
+        git push origin "v0.0.1"
+        echo "Tagged v0.0.1"
+        echo "VERSION_TAG=$new_tag" >> $GITHUB_ENV
+        echo "::set-output name=tag::${new_tag}"
+      shell: bash

@@ -1,0 +1,95 @@
+name: Deploy
+
+env:
+  SERVICE_NAME: "변수 선언"
+
+on:
+  workflow_dispatch:
+    inputs:
+      squad:
+        description: Squad Name HERE
+        required: true
+      service:
+        description: Micro Service Name HERE
+        required: true
+      choice:
+        type: choice
+        description: Select the environment (STG or PROD)
+        options:
+          - STG
+          - PROD
+jobs:
+  #start_deploy: # gh deployment api start action 수행
+  #  runs-on: ubuntu-latest
+  #  outputs:
+  #    env: ${{ steps.deployment.outputs.env }}
+  #    deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+  #  steps:
+  #    -
+  #      name: start deployment
+  #      uses: bobheadxi/deployments@v1
+  #      id: deployment
+  #      with:
+  #        step: start
+          #token: ${{ secrets.GITHUB_TOKEN }}
+  #        env: ${{ inputs.choice }}
+
+  build_images: # Docker Build And Push To ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to use OIDC authentication
+      contents: read # required to checkout the code from the repo
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.sha }}
+      - name: build_and_push_images
+        uses: ./.github/actions/build-image
+        with:
+          squad: ${{ inputs.squad }}
+          service: ${{ inputs.service }}
+          tag: ${{ github.sha }} #temp tag
+          aws-gh-action-role: ${{ secrets.AWS_GH_ACTION_ROLE }}
+
+  tagging: # Get Image Tag
+    needs: build_images
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.get_tag.outputs.tag }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+      - name: generate tag
+        id: get_tag
+        uses: ./.github/actions/generate-tag
+        with:
+          environment: ${{ inputs.choice }}
+
+  push_images: # Docker Build And Push To ECR
+    needs: tagging
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to use OIDC authentication
+      contents: read # required to checkout the code from the repo
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+      - name: build_and_push_images
+        uses: ./.github/actions/push-image
+        with:
+          squad: ${{ inputs.squad }}
+          service: ${{ inputs.service }}
+          tag: ${{ needs.tagging.outputs.tag }}
+          temp_tag: ${{ github.sha }} #temp tag
+          aws-gh-action-role: ${{ secrets.AWS_GH_ACTION_ROLE }}
+
+  update_helm_configuration: # Deployed by argoCD
+    needs: push_images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+      - name: Replace image tag in helm values
+        #if: # 기존 이미지가 없는 경우에만 실행
+        uses: ./.github/actions/update-helm-configuration

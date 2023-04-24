@@ -1,0 +1,93 @@
+name: 'Get Tag Name'
+description: 'Gets the tag name and Updates existing tag if PROD'
+
+inputs:
+  environment:
+    description: 'Environment'
+    required: true
+outputs:
+  tag:
+    description: The tag name
+    value: ${{ steps.tag_name.outputs.tag }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Find STG latest tags
+      run: |
+        git fetch --tags
+        LATEST_STAGING_TAG=$(git tag --list '1.*.*.*' | sort -V | tail -n 1)
+        if [ -n "$LATEST_STAGING_TAG" ]; then
+          echo "LATEST_STAGING_TAG=$LATEST_STAGING_TAG" >> $GITHUB_ENV
+        fi
+      shell: bash
+
+    - name: Find PROD latest tags
+      run: |
+        git fetch --tags
+        LATEST_PRODUCTION_TAG=$(git tag --list '1.*.*' | sort -V | tail -n 1)
+        if [ -n "$LATEST_PRODUCTION_TAG" ]; then
+          echo "LATEST_PRODUCTION_TAG=$LATEST_PRODUCTION_TAG" >> $GITHUB_ENV
+        fi
+      shell: bash
+
+    - name: Create STG new tag
+      id : create_new_stg_tag
+      run: |
+        if [ -z "$LATEST_STAGING_TAG" ]; then
+          echo "LATEST_STAGING_TAG=1.0.0.0" >> $GITHUB_ENV
+          NEW_TAG="1.0.0.0"
+          CREATED_STAGING_TAG=true
+        fi
+        
+        if [ "$CREATED_STAGING_TAG" = false ]; then
+          if [ "$LATEST_PRODUCTION_TAG" == "$LATEST_STAGING_TAG" ]; then
+            IFS='.' read -ra VERSION_PARTS <<< "${LATEST_STAGING_TAG}"
+            VERSION_PARTS[2]=$((VERSION_PARTS[2] + 1))
+            VERSION_PARTS[3]=0
+          else
+            IFS='.' read -ra VERSION_PARTS <<< "${LATEST_STAGING_TAG}"
+            VERSION_PARTS[3]=$((VERSION_PARTS[3] + 1))
+          fi
+          NEW_TAG="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${VERSION_PARTS[2]}.${VERSION_PARTS[3]}"
+        fi
+        echo "STAGING_NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+        git tag $NEW_TAG
+        git push origin $NEW_TAG
+      shell: bash
+
+    - name: Create PROD new tag
+      id: create_new_prod_tag
+      if: inputs.environment == 'PROD'
+      run: |
+        if [ -z "$LATEST_STAGING_TAG" ]; then
+          echo "LATEST_STAGING_TAG=1.0.0.0" >> $GITHUB_ENV
+        fi
+        if [ -n "$LATEST_PRODUCTION_TAG" ]; then
+          echo "LATEST_PRODUCTION_TAG=1.0.0" >> $GITHUB_ENV
+        fi
+
+        if [ "$LATEST_PRODUCTION_TAG" == "$LATEST_STAGING_TAG" ]; then
+          IFS='.' read -ra VERSION_PARTS <<< "${LATEST_STAGING_TAG}"
+          VERSION_PARTS[2]=$((VERSION_PARTS[2] + 1))
+          VERSION_PARTS[3]=0
+        else
+          IFS='.' read -ra VERSION_PARTS <<< "${LATEST_STAGING_TAG}"
+          VERSION_PARTS[3]=$((VERSION_PARTS[3] + 1))
+        fi
+        NEW_TAG="${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${VERSION_PARTS[2]}.${VERSION_PARTS[3]}"
+        echo "PRODUCTION_NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
+        git tag $NEW_TAG
+        git push origin $NEW_TAG
+      shell: bash
+
+    - name: New Tag for Image
+      id: tag_name
+      run: |
+        if [ "${{ inputs.environment }}" == "PROD" ]; then
+          NEW_TAG="${{ env.PRODUCTION_NEW_TAG }}"
+        else
+          NEW_TAG="${{ env.STAGING_NEW_TAG }}"
+        fi
+        echo "::set-output name=tag::${NEW_TAG}"
+      shell: bash

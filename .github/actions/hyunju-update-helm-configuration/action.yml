@@ -1,0 +1,10 @@
+name: 'Update Helm Configuration'
+description: 'Update Helm Configuration'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: "Update Configuration"
+      run: |
+        echo "Update Helm Configuration"
+      shell: bash

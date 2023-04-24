@@ -1,0 +1,84 @@
+name: STG-Deploy
+
+env:
+  ecr_root: "cicdyo"
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Micro Service Name HERE
+        required: true
+
+jobs:
+  build_images: # Docker Build And Push To ECR
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to use OIDC authentication
+      contents: read # required to checkout the code from the repo
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.sha }}
+      - name: build docker images
+        uses: ./.github/actions/build-image
+        with:
+          ecr_root: ${{ env.ecr_root }}
+          service: ${{ inputs.service }}
+          tag: ${{ github.sha }} #temp tag
+          aws-gh-action-role: ${{ secrets.AWS_GH_ACTION_ROLE }}
+
+  tagging: # Get Image Tag
+    needs: build_images
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.get_tag.outputs.tag }}
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+      - name: generate tag
+        id: get_tag
+        uses: ./.github/actions/generate-stg-tag
+
+  push_images: # Docker Build And Push To ECR
+    needs: tagging
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required to use OIDC authentication
+      contents: read # required to checkout the code from the repo
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+      - name: push docker images
+        uses: ./.github/actions/push-image
+        with:
+          ecr_root: ${{ env.ecr_root }}
+          service: ${{ inputs.service }}
+          #tag: ${{ needs.tagging.outputs.tag }}
+          tag: v0.0.0.1
+          temp_tag: ${{ github.sha }} #temp tag
+          aws-gh-action-role: ${{ secrets.AWS_GH_ACTION_ROLE }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  update_helm_config: # Deployed by argoCD
+    needs: push_images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v3
+      - name: Replace image tag in helm values
+        #if: # 기존 이미지가 없는 경우에만 실행
+        uses: ./.github/actions/update-helm-configuration
+
+  clean_up:
+    needs: update_helm_config
+    runs-on: ubuntu-latest
+    steps:
+      - name : Delete Artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          artifact_id=$(curl -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/${{ github.repository }}/actions/artifacts" | jq '.artifacts[] | select(.name=="docker-image") | .id')
+          echo "${artifact_id}"
+          curl -X DELETE -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$artifact_id"
